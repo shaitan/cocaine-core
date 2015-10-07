@@ -280,19 +280,50 @@ locator_cfg_t::locator_cfg_t(const std::string& name_, const dynamic_t& root):
     restricted.insert(name);
 }
 
+results::routing
+locator_t::routing_t::dump() const {
+    auto results = results::routing();
+    auto builder = std::inserter(results, results.end());
+
+    auto mapping = groups.synchronize();
+
+    std::transform(mapping->begin(), mapping->end(), builder,
+        [](const rg_map_t::value_type& value) -> results::routing::value_type
+    {
+        return {value.first, value.second.all()};
+    });
+
+    return results;
+}
+
+streamed<results::routing>
+locator_t::routing_t::notify(const std::string& ruid, const results::routing& results, policy_t policy) {
+    auto stream = routers.apply([&](router_map_t& mapping) -> streamed<results::routing> {
+        if(mapping.count(ruid) == 0 || ((policy == policy_t::replace) && mapping.erase(ruid))) {
+            COCAINE_LOG_INFO(log, "attaching an outgoing stream for router '%s'", ruid);
+        }
+
+        return mapping[ruid];
+    });
+
+    // NOTE: Even if there's nothing to return, still send out an empty update.
+    return stream.write(results);
+}
+
 locator_t::locator_t(context_t& context, io_service& asio, const std::string& name, const dynamic_t& root):
     category_type(context, asio, name, root),
     dispatch<locator_tag>(name),
     m_context(context),
     m_log(context.log(name)),
     m_cfg(name, root),
-    m_asio(asio)
+    m_asio(asio),
+    routing{*m_log}
 {
     on<locator::resolve>(std::bind(&locator_t::on_resolve, this, ph::_1, ph::_2));
     on<locator::connect>(std::bind(&locator_t::on_connect, this, ph::_1));
     on<locator::refresh>(std::bind(&locator_t::on_refresh, this, ph::_1));
     on<locator::cluster>(std::bind(&locator_t::on_cluster, this));
-    on<locator::routing>(std::bind(&locator_t::on_routing, this, ph::_1, true));
+    on<locator::routing>(std::bind(&locator_t::on_routing, this, ph::_1, routing_t::policy_t::replace));
 
     on<locator::publish>(std::make_shared<publish_slot_t>(this));
 
@@ -456,7 +487,7 @@ locator_t::uuid() const {
 
 results::resolve
 locator_t::on_resolve(const std::string& name, const std::string& seed) const {
-    const auto remapped = m_rgs.apply([&](const rg_map_t& mapping) -> std::string {
+    const auto remapped = routing.groups.apply([&](const rg_map_t& mapping) -> std::string {
         if(!mapping.count(name)) {
             return name;
         } else {
@@ -524,7 +555,7 @@ locator_t::on_refresh(const std::vector<std::string>& groups) {
     const auto storage = api::storage(m_context, "core");
     const auto updated = storage->find("groups", std::vector<std::string>({"group", "active"}));
 
-    m_rgs.unsafe() = boost::accumulate(groups, *m_rgs.synchronize(),
+    routing.groups.unsafe() = boost::accumulate(groups, *routing.groups.synchronize(),
         [&](rg_map_t accumulator, const std::string& group) -> rg_map_t
     {
         accumulator.erase(group);
@@ -550,16 +581,18 @@ locator_t::on_refresh(const std::vector<std::string>& groups) {
         return accumulator;
     });
 
-    const auto ruids = boost::accumulate(*m_routers.synchronize(), ruid_vector_t{},
+    const auto ruids = boost::accumulate(*routing.routers.synchronize(), ruid_vector_t{},
         [](ruid_vector_t result, const router_map_t::value_type& value) -> ruid_vector_t
     {
         result.push_back(value.first); return result;
     });
 
+    const auto results = routing.dump();
+
     for(auto it = ruids.begin(); it != ruids.end(); ++it) try {
-        on_routing(*it);
+        routing.notify(*it, results);
     } catch(...) {
-        m_routers->erase(*it);
+        routing.routers->erase(*it);
     }
 
     COCAINE_LOG_DEBUG(m_log, "enqueued sending routing updates to %d router(s)", ruids.size());
@@ -580,28 +613,8 @@ locator_t::on_cluster() const {
 }
 
 auto
-locator_t::on_routing(const std::string& ruid, bool replace) -> streamed<results::routing> {
-    auto results = results::routing();
-    auto builder = std::inserter(results, results.end());
-
-    auto mapping = m_rgs.synchronize();
-
-    std::transform(mapping->begin(), mapping->end(), builder,
-        [](const rg_map_t::value_type& value) -> results::routing::value_type
-    {
-        return {value.first, value.second.all()};
-    });
-
-    auto stream = m_routers.apply([&](router_map_t& mapping) -> streamed<results::routing> {
-        if(mapping.count(ruid) == 0 || (replace && mapping.erase(ruid))) {
-            COCAINE_LOG_INFO(m_log, "attaching an outgoing stream for router '%s'", ruid);
-        }
-
-        return mapping[ruid];
-    });
-
-    // NOTE: Even if there's nothing to return, still send out an empty update.
-    return stream.write(results);
+locator_t::on_routing(const std::string& ruid, routing_t::policy_t policy) -> streamed<results::routing> {
+    return routing.notify(ruid, routing.dump(), policy);
 }
 
 void
@@ -665,7 +678,7 @@ locator_t::on_context_shutdown() {
         });
     });
 
-    m_routers.apply([this](router_map_t& mapping) {
+    routing.routers.apply([this](router_map_t& mapping) {
         if(mapping.empty()) {
             return;
         } else {

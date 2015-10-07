@@ -104,9 +104,6 @@ class locator_t:
     std::unique_ptr<api::cluster_t> m_cluster;
     std::unique_ptr<api::gateway_t> m_gateway;
 
-    // Used to resolve service names against routing groups, based on weights and other metrics.
-    synchronized<rg_map_t> m_rgs;
-
     // Incoming remote locator streams indexed by uuid. Uuid is required to disambiguate between
     // multiple different instances on the same host and port (in case it was restarted).
     synchronized<client_map_t> m_clients;
@@ -120,8 +117,32 @@ class locator_t:
     // Snapshots of the local service states. Synchronized with outgoing remote streams.
     std::map<std::string, results::resolve> m_snapshots;
 
-    // Outgoing router streams indexed by some arbitrary router-provided uuid.
-    synchronized<router_map_t> m_routers;
+    struct routing_t {
+        enum class policy_t {
+            // Reuse the routing stream if it exists.
+            reuse,
+            // Replace existing routing stream even if the keys are same.
+            replace
+        };
+
+        const logging::log_t& log;
+
+        // Used to resolve service names against routing groups, based on weights and other metrics.
+        synchronized<rg_map_t> groups;
+
+        // Outgoing router streams indexed by some arbitrary router-provided uuid.
+        synchronized<router_map_t> routers;
+
+        routing_t(const logging::log_t& log):
+            log(log)
+        {}
+
+        results::routing
+        dump() const;
+
+        streamed<results::routing>
+        notify(const std::string& ruid, const results::routing& results, policy_t policy = policy_t::reuse);
+    } routing;
 
 public:
     locator_t(context_t& context, asio::io_service& asio, const std::string& name, const dynamic_t& args);
@@ -167,7 +188,7 @@ private:
     on_cluster() const -> results::cluster;
 
     auto
-    on_routing(const std::string& ruid, bool replace = false) -> streamed<results::routing>;
+    on_routing(const std::string& ruid, routing_t::policy_t policy) -> streamed<results::routing>;
 
     // Context signals
 
