@@ -36,6 +36,8 @@
 #include <boost/spirit/include/karma_list.hpp>
 #include <boost/spirit/include/karma_string.hpp>
 
+#include <metrics/registry.hpp>
+
 using namespace cocaine;
 using namespace cocaine::io;
 
@@ -43,7 +45,8 @@ using namespace blackhole;
 
 context_t::context_t(config_t config_, std::unique_ptr<logging::log_t> log_):
     config(config_),
-    mapper(config_)
+    mapper(config_),
+    metric_registry(new metrics::registry_t)
 {
     m_log = std::move(log_);
 
@@ -183,6 +186,11 @@ struct utilization_t {
 execution_unit_t&
 context_t::engine() {
     return **std::min_element(m_pool.begin(), m_pool.end(), utilization_t());
+}
+
+metrics::registry_t&
+context_t::metrics() {
+    return *metric_registry;
 }
 
 void

@@ -36,6 +36,12 @@
 
 #include <boost/optional.hpp>
 
+namespace metrics {
+
+class registry_t;
+
+}  // namespace metrics
+
 namespace cocaine {
 
 // Context
@@ -65,6 +71,8 @@ class context_t {
 
     // Context signalling hub.
     retroactive_signal<io::context_tag> m_signals;
+
+    std::unique_ptr<metrics::registry_t> metric_registry;
 
 public:
     const config_t config;
@@ -105,6 +113,9 @@ public:
 
     auto
     engine() -> execution_unit_t&;
+
+    metrics::registry_t&
+    metrics();
 
 private:
     void

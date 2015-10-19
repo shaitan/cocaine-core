@@ -64,6 +64,9 @@ LINK_DIRECTORIES(
     ${LIBMSGPACK_LIBRARY_DIRS}
     ${LIBLTDL_LIBRARY_DIRS})
 
+SET(METRICS_BUILD_STATIC ON CACHE BOOL "Build the Metrics library as static")
+ADD_SUBDIRECTORY(../../code/metrics/ ${CMAKE_CURRENT_BINARY_DIR}/metrics)
+
 ADD_LIBRARY(cocaine-core SHARED
     src/actor.cpp
     src/actor_unix.cpp
@@ -99,6 +102,7 @@ TARGET_LINK_LIBRARIES(cocaine-core
     ltdl
     mhash
     msgpack
+    metric
     ${LIBUUID_LIBRARY})
 
 SET_TARGET_PROPERTIES(cocaine-core PROPERTIES
