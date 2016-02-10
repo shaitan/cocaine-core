@@ -73,6 +73,7 @@ logging_t::on_emit(logging::priorities level, std::string source, std::string me
 
     if(!record) return;
 
+    record.insert({"app", source});
     record.insert(cocaine::logging::keyword::source() = std::move(source));
     record.message(std::move(message));
 
