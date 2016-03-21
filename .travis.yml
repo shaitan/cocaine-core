@@ -1,0 +1,10 @@
+language: cpp
+compiler:
+  - gcc
+before_install:
+  - sudo apt-get update -qq
+install:
+  - sudo apt-get install -qq devscripts build-essential equivs python-software-properties
+script:
+  - yes | sudo mk-build-deps -i
+  - yes | debuild -e CC -e CXX --prepend-path="/usr/local/bin/" -uc -us
