@@ -274,7 +274,7 @@ main(int argc, char* argv[]) {
             .build("core");
 
         root.reset(new blackhole::root_logger_t(std::move(log)));
-        logger.reset(new blackhole::wrapper_t(*root, {}));
+        logger.reset(new blackhole::wrapper_t(*root, {{"hostname", config->network().hostname()}}));
     } catch(const std::exception& e) {
         std::cerr << "ERROR: unable to initialize the logging: " << e.what() << std::endl;
         return EXIT_FAILURE;
