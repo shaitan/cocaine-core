@@ -31,6 +31,9 @@ namespace cocaine {
 class actor_t {
 public:
     virtual
+    ~actor_t() = default;
+
+    virtual
     auto
     is_active() const -> bool = 0;
 
