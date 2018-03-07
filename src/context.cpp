@@ -394,6 +394,14 @@ public:
         // are being handled.
         m_acceptor_thread->get_io_service().stop();
 
+        COCAINE_LOG_INFO(m_log, "stopping {:d} execution unit(s)", m_pool.size());
+        m_pool.clear();
+
+        // Destroy the service objects.
+        actors.clear();
+
+        // Due the race between stopping m_acceptor_thread and handling 'on_shutdown' signal by Node service,
+        // m_acceptor_thread should be completely destroyed only when all services, including Node, are destroyed.
         // Does not block, unlike the one in execution_unit_t's destructors.
         m_acceptor_thread.reset();
 
@@ -404,12 +412,6 @@ public:
         // I/O loop termination.
 
         // BOOST_ASSERT(m_services->empty());
-
-        COCAINE_LOG_INFO(m_log, "stopping {:d} execution unit(s)", m_pool.size());
-        m_pool.clear();
-
-        // Destroy the service objects.
-        actors.clear();
 
         reset_logger_filter();
 
