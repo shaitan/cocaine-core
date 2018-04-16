@@ -63,7 +63,7 @@ public:
     ///
     /// Usually used right after async wait, f.e. `signal_handler.async_wait(callback).detach();`.
     ///
-    /// \returns `true` if the callback was sucessfully detached (was not cancelled before,
+    /// \returns `true` if the callback was successfully detached (was not cancelled before,
     ///     detached before and callback is present).
     bool
     detach();
