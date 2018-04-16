@@ -140,6 +140,10 @@ main(int argc, char* argv[]) {
     }
 #endif
 
+    // Signal handling.
+
+    signal::handler_t handler({SIGPIPE, SIGINT, SIGQUIT, SIGTERM, SIGCHLD, SIGHUP});
+
     // Logging
 
     const auto backend = vm["logging"].as<std::string>();
@@ -172,10 +176,6 @@ main(int argc, char* argv[]) {
     auto slog = std::make_shared<blackhole::wrapper_t>(*root, blackhole::attributes_t{
         {"source", "runtime/signals"}
     });
-
-    // Signal handling.
-
-    signal::handler_t handler(slog, {SIGPIPE, SIGINT, SIGQUIT, SIGTERM, SIGCHLD, SIGHUP});
 
     // Run context.
     std::unique_ptr<context_t> context;

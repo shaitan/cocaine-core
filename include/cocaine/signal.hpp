@@ -107,7 +107,7 @@ public:
 
     typedef std::map<uint64_t, detailed_callback_type> detailed_callback_storage;
 
-    handler_t(std::shared_ptr<cocaine::logging::logger_t> logger, std::set<int> signal_set);
+    handler_t(std::set<int> signal_set);
 
     handler_t(const handler_t&) = delete;
     handler_t(handler_t&&) = delete;
@@ -118,10 +118,10 @@ public:
     ~handler_t();
 
     void
-    run();
+    run(std::shared_ptr<cocaine::logging::logger_t> logger);
 
     void
-    stop();
+    stop(std::shared_ptr<cocaine::logging::logger_t> logger);
 
 private:
     // Setup a single time handler for specified signal number.
@@ -134,8 +134,6 @@ private:
     // It should be reset up on signal.
     virtual cancellation_t
     async_wait_detailed(int signum, detailed_callback_type handler);
-
-    std::shared_ptr<cocaine::logging::logger_t> logger;
 
     std::set<int> signals;
 

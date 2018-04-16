@@ -145,8 +145,7 @@ cancellation_t::~cancellation_t() {
     detach();
 }
 
-handler_t::handler_t(std::shared_ptr<cocaine::logging::logger_t> logger_, std::set<int> signals_) :
-    logger(std::move(logger_)),
+handler_t::handler_t(std::set<int> signals_) :
     signals(std::move(signals_))
 {
     signals.insert(interrupt_signal);
@@ -174,14 +173,14 @@ handler_t::~handler_t() {
 }
 
 void
-handler_t::stop() {
+handler_t::stop(std::shared_ptr<cocaine::logging::logger_t> logger) {
     COCAINE_LOG_INFO(logger, "stopping signal handler");
     should_run = false;
     kill(::getpid(), interrupt_signal);
 }
 
 void
-handler_t::run() {
+handler_t::run(std::shared_ptr<cocaine::logging::logger_t> logger) {
     siginfo_t info;
     should_run = true;
     sigset_t sig_set = get_signal_set(signals);
@@ -307,7 +306,7 @@ engine_t::~engine_t() {
         return;
     }
 
-    inner.stop();
+    inner.stop(log);
     std::move(*this).join();
 }
 
@@ -348,7 +347,7 @@ engine_t::wait_for(std::initializer_list<int> signums) -> void {
 auto
 engine_t::run() -> void {
     try {
-        inner.run();
+        inner.run(log);
     } catch (const std::system_error& err) {
         COCAINE_LOG_ERROR(log, "failed to complete signal handling: {}", error::to_string(err));
     }
