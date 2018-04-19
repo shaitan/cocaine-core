@@ -1,3 +1,10 @@
+cocaine-core (0.12.15.0) unstable; urgency=low
+
+  * Fixed: typo
+  * Fixed (BREAKING): race between socket close and async calls by stream
+
+ -- Kirill Smorodinnikov <shaitkir@gmail.com>  Thu, 19 Apr 2018 11:31:41 +0300
+
 cocaine-core (0.12.14.25) unstable; urgency=low
 
   * Fixed: typo
