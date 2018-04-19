@@ -22,6 +22,7 @@
 #define COCAINE_IO_BUFFERED_WRITABLE_STREAM_HPP
 
 #include "cocaine/errors.hpp"
+#include "cocaine/locked_ptr.hpp"
 #include "cocaine/trace/trace.hpp"
 
 #include <functional>
@@ -56,6 +57,8 @@ class writable_stream:
 
     encoder_type encoder;
 
+    synchronized<bool> m_stopped{false};
+
 public:
     explicit
     writable_stream(const std::shared_ptr<socket_type>& socket):
@@ -65,6 +68,11 @@ public:
 
     void
     write(const message_type& message, handler_type handle) {
+        auto stopped = m_stopped.synchronize();
+        if (*stopped) {
+            return;
+        }
+
         size_t bytes_written = 0;
 
         auto encoded = encoder.encode(message);
@@ -103,9 +111,20 @@ public:
         return asio::buffer_size(m_messages);
     }
 
+    void stop() {
+        m_stopped.apply([] (bool& stopped) {
+            stopped = true;
+        });
+    }
+
 private:
     void
     flush(const std::error_code& ec, size_t bytes_written) {
+        auto stopped = m_stopped.synchronize();
+        if (*stopped) {
+            return;
+        }
+
         if(ec) {
             if(ec == asio::error::operation_aborted) {
                 return;

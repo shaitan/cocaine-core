@@ -22,6 +22,7 @@
 #define COCAINE_IO_BUFFERED_READABLE_STREAM_HPP
 
 #include "cocaine/errors.hpp"
+#include "cocaine/locked_ptr.hpp"
 #include "cocaine/memory.hpp"
 
 #include <functional>
@@ -55,6 +56,8 @@ class readable_stream:
 
     decoder_type m_decoder;
 
+    synchronized<bool> m_stopped{false};
+
 public:
     explicit
     readable_stream(const std::shared_ptr<socket_type>& socket):
@@ -66,6 +69,11 @@ public:
 
     void
     read(message_type& message, handler_type handle) {
+        auto stopped = m_stopped.synchronize();
+        if (*stopped) {
+            return;
+        }
+
         std::error_code ec;
 
         const size_t
@@ -107,9 +115,21 @@ public:
         return m_ring.size();
     }
 
+    void
+    stop() {
+        m_stopped.apply([] (bool& stopped) {
+            stopped = true;
+        });
+    }
+
 private:
     void
     fill(message_type& message, handler_type handle, const std::error_code& ec, size_t bytes_read) {
+        auto stopped = m_stopped.synchronize();
+        if (*stopped) {
+            return;
+        }
+
         if(ec) {
             if(ec == asio::error::operation_aborted) {
                 return;

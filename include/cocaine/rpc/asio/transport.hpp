@@ -57,6 +57,8 @@ struct transport {
 
    ~transport() {
         try {
+            reader->stop();
+            writer->stop();
             socket->shutdown(socket_type::shutdown_both);
             socket->close();
         } catch(...) {
