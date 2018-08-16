@@ -607,7 +607,12 @@ locator_t::on_connect(const std::string& uuid) -> streamed<results::connect> {
         return stream;
     }
 
-    if(mapping->erase(uuid) == 0) {
+    auto it = mapping->find(uuid);
+    if (it != mapping->end()) {
+        it->second.close();
+        mapping->erase(it);
+        COCAINE_LOG_INFO(m_log, "re-attaching outgoing stream for locator");
+    } else {
         COCAINE_LOG_INFO(m_log, "attaching outgoing stream for locator");
     }
 
