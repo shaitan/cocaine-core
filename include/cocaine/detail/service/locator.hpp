@@ -83,6 +83,8 @@ class locator_t:
     typedef std::map<std::string, streamed<results::connect>> remote_map_t;
     typedef std::map<std::string, streamed<results::routing>> router_map_t;
 
+    using retry_timers_map_t = std::unordered_map<std::string, std::shared_ptr<asio::deadline_timer>>;
+
     context_t& m_context;
 
     const std::unique_ptr<logging::logger_t> m_log;
@@ -115,7 +117,7 @@ class locator_t:
     synchronized<router_map_t> m_routers;
 
     // Mapping from uuid to corresponding connection retry timer.
-    std::map<std::string, std::shared_ptr<asio::deadline_timer>> m_retry_timers;
+    retry_timers_map_t m_retry_timers;
 
 public:
     locator_t(context_t& context, asio::io_service& asio, const std::string& name, const dynamic_t& args);
@@ -148,6 +150,9 @@ public:
     uuid() const;
 
 private:
+    auto
+    link_node_unsafe(const std::string& uuid, const std::vector<asio::ip::tcp::endpoint>& endpoints) -> void;
+
     auto
     retry_link_node(const std::string& uuid, const std::vector<asio::ip::tcp::endpoint>& endpoints) -> void;
 
