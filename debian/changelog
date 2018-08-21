@@ -1,3 +1,10 @@
+cocaine-core (0.12.14.27) unstable; urgency=low
+
+  * Fixed: close previous stream on re-attaching
+  * Fixed: race between node de-announce and retry timers
+
+ -- Kirill Smorodinnikov <shaitkir@gmail.com>  Thu, 20 Aug 2018 20:36:32 +0300
+
 cocaine-core (0.12.14.25) unstable; urgency=low
 
   * Fixed: typo

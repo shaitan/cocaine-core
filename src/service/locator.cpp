@@ -400,6 +400,8 @@ locator_t::locator_t(context_t& context, io_service& asio, const std::string& na
 
 locator_t::~locator_t() {
     // In general we don't need this, because ioloop is stopped before dtor.
+    const auto lock = m_clients.synchronize();
+
     for (auto& timer: m_retry_timers) {
         timer.second->cancel();
     }
@@ -418,25 +420,69 @@ locator_t::asio() {
 
 void
 locator_t::link_node(const std::string& uuid, const std::vector<tcp::endpoint>& endpoints) {
-    auto mapping = m_clients.synchronize();
+    const auto lock = m_clients.synchronize();
 
-    if(!m_gateway || mapping->count(uuid) != 0) {
+    link_node_unsafe(uuid, endpoints);
+}
+
+void
+locator_t::drop_node(const std::string& uuid) {
+    std::shared_ptr<session<tcp>> session;
+
+    m_clients.apply([&](client_map_t& mapping) {
+        auto timer = m_retry_timers.find(uuid);
+        if (timer != m_retry_timers.end()) {
+            timer->second->cancel();
+            m_retry_timers.erase(timer);
+        }
+
+        auto it = mapping.find(uuid);
+
+        if(!m_gateway || it == mapping.end()) {
+            return;
+        }
+
+        COCAINE_LOG_INFO(m_log, "shutting down remote client", attribute_list({
+            {"uuid", uuid}
+        }));
+
+        session = it->second.ptr;
+        mapping.erase(it);
+    });
+
+    if(session) {
+        session->detach(std::error_code());
+    }
+}
+
+std::string
+locator_t::uuid() const {
+    return m_context.uuid();
+}
+
+
+auto
+locator_t::link_node_unsafe(const std::string& uuid, const std::vector<asio::ip::tcp::endpoint>& endpoints) -> void {
+    if(!m_gateway || m_clients.unsafe().count(uuid) != 0) {
         return;
     }
 
     auto socket = std::make_shared<tcp::socket>(m_asio);
     auto connect_timer = std::make_shared<asio::deadline_timer>(m_asio);
-    auto& uplink = ((*mapping)[uuid] = {endpoints, nullptr});
+    auto& uplink = (m_clients.unsafe()[uuid] = {endpoints, nullptr});
 
     connect_timer->expires_from_now(boost::posix_time::seconds(10));
     connect_timer->async_wait([=](std::error_code ec) {
         if(!ec) {
             COCAINE_LOG_INFO(m_log, "connection timer expired, canceling socket, going to schedule reconnect");
-            m_clients->erase(uuid);
-            //We don't care about ec - it's here to use nothrow overload.
-            std::error_code ec;
-            socket->close(ec);
-            retry_link_node(uuid, endpoints);
+            m_clients.apply([=](client_map_t& mapping) {
+                // We don't care about ec - it's here to use nothrow overload.
+                std::error_code ec;
+                socket->close(ec);
+                if (mapping.erase(uuid)) {
+                    retry_link_node(uuid, endpoints);
+                }
+            });
         } else {
             COCAINE_LOG_DEBUG(m_log, "connection timer was cancelled");
         }
@@ -481,7 +527,6 @@ locator_t::link_node(const std::string& uuid, const std::vector<tcp::endpoint>& 
             } catch (const std::system_error& err) {
                 COCAINE_LOG_ERROR(m_log, "unable to set up remote client: {}", error::to_string(err));
                 mapping.erase(uuid);
-
                 retry_link_node(uuid, endpoints);
             }
 
@@ -506,50 +551,20 @@ locator_t::link_node(const std::string& uuid, const std::vector<tcp::endpoint>& 
     }));
 }
 
-void
-locator_t::drop_node(const std::string& uuid) {
-    std::shared_ptr<session<tcp>> session;
-
-    m_clients.apply([&](client_map_t& mapping) {
-        auto it = mapping.find(uuid);
-
-        if(!m_gateway || it == mapping.end()) {
-            return;
-        }
-
-        COCAINE_LOG_INFO(m_log, "shutting down remote client", attribute_list({
-            {"uuid", uuid}
-        }));
-
-        session = it->second.ptr;
-        mapping.erase(it);
-    });
-
-    if(session) {
-        session->detach(std::error_code());
-    }
-}
-
-std::string
-locator_t::uuid() const {
-    return m_context.uuid();
-}
-
 auto
 locator_t::retry_link_node(const std::string& uuid, const std::vector<asio::ip::tcp::endpoint>& endpoints) -> void {
-    auto it = m_retry_timers.find(uuid);
-    if (it != m_retry_timers.end()) {
+    if (m_retry_timers.count(uuid)) {
         return;
     }
 
-    auto timer = std::make_shared<asio::deadline_timer>(m_asio);
+    auto timer = m_retry_timers[uuid] = std::make_shared<asio::deadline_timer>(m_asio);
 
-    m_retry_timers[uuid] = timer;
     timer->expires_from_now(boost::posix_time::seconds(10));
     timer->async_wait([=](const std::error_code& ec) {
-        m_retry_timers.erase(uuid);
-        if(!ec) {
-            link_node(uuid, endpoints);
+        const auto lock = m_clients.synchronize();
+
+        if(!ec && m_retry_timers.erase(uuid)) {
+            link_node_unsafe(uuid, endpoints);
         }
     });
 }
@@ -607,7 +622,12 @@ locator_t::on_connect(const std::string& uuid) -> streamed<results::connect> {
         return stream;
     }
 
-    if(mapping->erase(uuid) == 0) {
+    auto it = mapping->find(uuid);
+    if (it != mapping->end()) {
+        it->second.close();
+        mapping->erase(it);
+        COCAINE_LOG_INFO(m_log, "re-attaching outgoing stream for locator");
+    } else {
         COCAINE_LOG_INFO(m_log, "attaching outgoing stream for locator");
     }
 
