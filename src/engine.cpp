@@ -86,15 +86,16 @@ execution_unit_t::gc_action_t::finalize(const std::error_code& ec) {
 
     size_t recycled = 0;
 
-    for(auto it = parent->m_sessions.begin(); it != parent->m_sessions.end();) {
-        if(!it->second->memory_pressure()) {
-            recycled++;
-            it = parent->m_sessions.erase(it);
-            continue;
+    parent->m_sessions.apply([&](session_map_t& sessions) {
+        for(auto it = sessions.begin(); it != sessions.end();) {
+            if(!it->second->memory_pressure()) {
+                recycled++;
+                it = sessions.erase(it);
+                continue;
+            }
+            ++it;
         }
-
-        ++it;
-    }
+    });
 
     if(recycled) {
         COCAINE_LOG_DEBUG(parent->m_log, "recycled {:d} session(s)", recycled);
@@ -118,14 +119,22 @@ execution_unit_t::execution_unit_t(context_t& context):
     COCAINE_LOG_DEBUG(m_log, "engine started");
 }
 
-execution_unit_t::~execution_unit_t() {
+void
+execution_unit_t::terminate() {
+    if (terminating.exchange(true)) {
+        return;
+    }
+
     m_asio->post([this] {
         COCAINE_LOG_DEBUG(m_log, "stopping engine");
 
-        for(auto it = m_sessions.begin(); it != m_sessions.end(); ++it) {
-            // Close the connections.
-            it->second->detach(std::error_code());
-        }
+        m_sessions.apply([](session_map_t& sessions) {
+            for(auto it = sessions.begin(); it != sessions.end(); ++it) {
+                // Close the connections.
+                it->second->detach(std::error_code());
+            }
+            sessions.clear();
+        });
 
         // NOTE: It's okay to destroy deadline timer here, because garbage collector always performs
         // existence check for timer.
@@ -142,6 +151,10 @@ execution_unit_t::attach(std::unique_ptr<Socket> ptr, const dispatch_ptr_t& disp
     typedef Socket socket_type;
     typedef typename socket_type::protocol_type protocol_type;
     typedef session<protocol_type> session_type;
+
+    if (terminating) {
+        throw error_t("execution unit is terminating");
+    }
 
     int fd;
 
@@ -198,7 +211,11 @@ execution_unit_t::attach(std::unique_ptr<Socket> ptr, const dispatch_ptr_t& disp
     }
 
     m_asio->dispatch([=]() mutable {
-        m_sessions[fd] = std::move(session_);
+        m_sessions.apply([=](session_map_t& sessions) {
+            if (!terminating) {
+                sessions[fd] = std::move(session_);
+            }
+        });
     });
 
     return session_;

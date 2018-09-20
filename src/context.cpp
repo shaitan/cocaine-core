@@ -91,6 +91,9 @@ class context_impl_t : public context_t {
     // An acceptor thread.
     std::unique_ptr<io::chamber_t> m_acceptor_thread;
 
+    // An service thread.
+    std::unique_ptr<io::chamber_t> m_service_thread;
+
     // A pool of execution units - threads responsible for doing all the service invocations.
     engine_pool_t m_pool;
 
@@ -118,6 +121,8 @@ public:
                    std::unique_ptr<api::repository_t> _repository) :
         m_log(new logging::trace_wrapper_t(std::move(_log))),
         m_repository(std::move(_repository)),
+        m_acceptor_thread(std::make_unique<io::chamber_t>("acceptor", std::make_shared<io::io_service>())),
+        m_service_thread(std::make_unique<io::chamber_t>("service", std::make_shared<io::io_service>())),
         m_bootstrapped(false),
         m_config(std::move(_config)),
         m_mapper(*m_config)
@@ -134,8 +139,6 @@ public:
 
         // Load the rest of plugins.
         m_repository->load(m_config->path().plugins());
-
-        m_acceptor_thread = std::make_unique<io::chamber_t>("acceptor", std::make_shared<io::io_service>());
 
         // Spin up all the configured services, launch execution units.
         COCAINE_LOG_INFO(m_log, "starting {:d} execution unit(s)", m_config->network().pool());
@@ -156,7 +159,7 @@ public:
                     insert(name, std::make_unique<tcp_actor_t>(*this, repository().get<api::service_t>(
                         service.type(),
                         *this,
-                        m_acceptor_thread->get_io_service(),
+                        m_service_thread->get_io_service(),
                         name,
                         service.args()
                     )));
@@ -303,7 +306,7 @@ public:
     }
 
     std::unique_ptr<tcp_actor_t>
-    remove (const std::string& name) override {
+    remove(const std::string& name) override {
         const holder_t scoped(*m_log, {{"source", "core"}});
 
         std::unique_ptr<tcp_actor_t> service;
@@ -375,10 +378,12 @@ public:
         // the outstanding connections are closed, so services have a chance to send their last wishes.
         m_signals.invoke<io::context::shutdown>();
 
-        // Stop the service from accepting new clients or doing any processing. Pop them from the active
-        // service list into this temporary storage, and then destroy them all at once. This is needed
-        // because sessions in the execution units might still have references to the services, and their
-        // lives have to be extended until those sessions are active.
+        // Stop internal services from accepting new clients or doing any processing. Pop them from the active
+        // service list into this temporary storage, and then destroy them all at once. So
+        // 1) sessions in the execution unit
+        // 2) service thread
+        // 3) vector of actors
+        // might still have references to the services and extend its life time.
         std::vector<std::unique_ptr<actor_t>> actors;
 
         m_config->services().each([&](const std::string& name, const config_t::component_t&){
@@ -389,29 +394,30 @@ public:
             }
         });
 
-        // Do not wait for the service to finish all its stuff (like timers, etc). Graceful
-        // termination happens only in engine chambers, because that's where client connections
-        // are being handled.
-        m_acceptor_thread->get_io_service().stop();
-
+        // Forbid creation of sessions and clear the list of them. After that sessions can still live by smart pointers
+        // with the services (as in vicodyn::peer_t, ...). Actors must still live here because some dispatches
+        // (locator_t::connect_sink_t, ...) use actors by raw pointer. Acceptor must still live here because reaction
+        // on work with sessions (announce of new node in locator, ...) can lead to accepting of new socket.
         COCAINE_LOG_INFO(m_log, "stopping {:d} execution unit(s)", m_pool.size());
-        m_pool.clear();
+        for (auto& execution_unit : m_pool) {
+            execution_unit->terminate();
+        }
 
-        // Destroy the service objects.
+        // Wait for completion of work with sockets.
+        m_acceptor_thread.reset();
+
+        // Destroy the service objects. Some actors can still live in asio callbacks in service thread.
         actors.clear();
 
-        // Due the race between stopping m_acceptor_thread and handling 'on_shutdown' signal by Node service,
-        // m_acceptor_thread should be completely destroyed only when all services, including Node, are destroyed.
-        // Does not block, unlike the one in execution_unit_t's destructors.
-        m_acceptor_thread.reset();
+        // Stop service thread. Stack of this thread it is the last place with possible references to the services and
+        // sessions.
+        m_service_thread.reset();
 
         // There should be no outstanding services left. All the extra services spawned by others, like
         // app invocation services from the node service, should be dead by now.
-        // TODO: Here's race by design. For example Node service listens `on_shutdown` signal, but
-        // its invocation occurs in the `m_acceptor_thread` thread and can be missed due to force
-        // I/O loop termination.
+        BOOST_ASSERT(m_services->empty());
 
-        // BOOST_ASSERT(m_services->empty());
+        m_pool.clear();
 
         reset_logger_filter();
 

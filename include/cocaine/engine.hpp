@@ -22,8 +22,11 @@
 #define COCAINE_ENGINE_HPP
 
 #include "cocaine/common.hpp"
+#include "cocaine/locked_ptr.hpp"
 
 #include <asio/deadline_timer.hpp>
+
+#include <unordered_map>
 
 namespace cocaine {
 
@@ -38,8 +41,8 @@ class execution_unit_t {
     class gc_action_t;
 
     // Connections
-
-    std::map<int, std::shared_ptr<session_t>> m_sessions;
+    using session_map_t = std::unordered_map<int, std::shared_ptr<session_t>>;
+    synchronized<session_map_t> m_sessions;
 
     // I/O
 
@@ -58,11 +61,11 @@ class execution_unit_t {
 
     context_t& context;
 
+    std::atomic_bool terminating = ATOMIC_VAR_INIT(false);
+
 public:
     explicit
     execution_unit_t(context_t& context);
-
-   ~execution_unit_t();
 
     template<class Socket>
     std::shared_ptr<session<typename Socket::protocol_type>>
@@ -70,6 +73,9 @@ public:
 
     double
     utilization() const;
+
+    void
+    terminate();
 };
 
 } // namespace cocaine
