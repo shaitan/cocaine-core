@@ -1,3 +1,9 @@
+cocaine-core (0.12.14.28) unstable; urgency=low
+
+  * Fixed: fix crash in execution_unit during service stop
+
+ -- Artem Selishchev <arselishev@gmail.com>  Fri, 21 Sep 2018 15:29:13 +0300
+
 cocaine-core (0.12.14.27) unstable; urgency=low
 
   * Fixed: close previous stream on re-attaching
