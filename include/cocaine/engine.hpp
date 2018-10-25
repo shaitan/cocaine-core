@@ -25,6 +25,7 @@
 #include "cocaine/locked_ptr.hpp"
 
 #include <asio/deadline_timer.hpp>
+#include <boost/thread/shared_mutex.hpp>
 
 #include <unordered_map>
 
@@ -48,6 +49,8 @@ class execution_unit_t {
 
     std::shared_ptr<asio::io_service> m_asio;
     std::unique_ptr<io::chamber_t> m_chamber;
+    mutable boost::shared_mutex m_chamber_guard;
+    const std::string m_thread_id;
 
     // Initialized here because of the dependency on the io::chamber_t's thread ID.
     const std::unique_ptr<logging::logger_t> m_log;

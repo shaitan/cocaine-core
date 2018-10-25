@@ -107,7 +107,8 @@ execution_unit_t::gc_action_t::finalize(const std::error_code& ec) {
 execution_unit_t::execution_unit_t(context_t& context):
     m_asio(new io_service()),
     m_chamber(new chamber_t("core/asio", m_asio)),
-    m_log(context.log("core/asio", {{"engine", m_chamber->thread_id()}})),
+    m_thread_id(m_chamber->thread_id()),
+    m_log(context.log("core/asio", {{"engine", m_thread_id}})),
     m_metrics(context.metrics_hub()),
     m_cron(new asio::deadline_timer(*m_asio)),
     context(context)
@@ -141,8 +142,9 @@ execution_unit_t::terminate() {
         m_cron.reset();
     });
 
+    boost::unique_lock<boost::shared_mutex> lock(m_chamber_guard);
     // NOTE: This will block until all the outstanding operations are complete.
-    m_chamber = nullptr;
+    m_chamber.reset();
 }
 
 template<class Socket>
@@ -194,9 +196,9 @@ execution_unit_t::attach(std::unique_ptr<Socket> ptr, const dispatch_ptr_t& disp
         }
 
         auto log = context.log("core/asio/session", {
-            {"endpoint", remote_endpoint                       },
+            {"endpoint", remote_endpoint},
             {"service",  dispatch ? dispatch->name() : "<none>"},
-            {"engine", m_chamber->thread_id()}
+            {"engine",   m_thread_id}
         });
 
         COCAINE_LOG_DEBUG(log, "attached connection to engine, load: {:.2f}%", utilization() * 100);
@@ -223,6 +225,10 @@ execution_unit_t::attach(std::unique_ptr<Socket> ptr, const dispatch_ptr_t& disp
 
 double
 execution_unit_t::utilization() const {
+    boost::shared_lock<boost::shared_mutex> lock(m_chamber_guard);
+    if (!m_chamber) {
+        throw error_t("execution unit is terminating");
+    }
     return m_chamber->load_avg1();
 }
 
